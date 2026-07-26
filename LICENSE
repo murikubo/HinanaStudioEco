@@ -1,0 +1,45 @@
+HINANA STUDIO ECO PROPRIETARY LICENSE
+
+Copyright (c) 2026 비나래. All rights reserved.
+
+HINANA STUDIO ECO and its source code are proprietary software. Publication
+of the source code in a public repository does not make the software open
+source and does not grant a license to copy, modify, distribute, sublicense,
+sell, relicense, deploy, rebrand, or create derivative works from the source
+code.
+
+Official, unmodified binary releases of HINANA STUDIO ECO may be downloaded
+and used free of charge for lawful personal or commercial audio production.
+The copyright holder claims no rights over audio, media, or project output
+created or edited by users with an official binary release.
+
+No permission is granted to redistribute the binaries, bundle them with
+another product, remove or alter attribution, use the HINANA STUDIO ECO name,
+icon, interface, or branding for another product, or offer the software or a
+modified version as a hosted or commercial service without prior written
+permission from the copyright holder.
+
+Project files and audio media created or imported by users remain the property
+of their respective owners. Users are solely responsible for ensuring that
+they have the rights and permissions required to edit, encode, export, share,
+or distribute such content.
+
+Forking through GitHub is permitted only as provided by GitHub's platform
+features and the GitHub Terms of Service. A fork is a repository copy made
+through GitHub's service and does not grant any copyright license to use,
+modify, publish, distribute, deploy, rebrand, sublicense, or create derivative
+works from the software, except solely to the extent required by GitHub's
+Terms of Service.
+
+Third-party libraries, tools, fonts, codecs, media, and other dependencies are
+subject to their respective licenses and are not relicensed by this notice.
+This includes Electron, React, FFmpeg, and their respective dependencies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF THE SOFTWARE.
+
+For permissions not granted above, contact the copyright holder:
+https://github.com/murikubo

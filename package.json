@@ -1,0 +1,125 @@
+{
+  "name": "hinana-studio-eco",
+  "version": "0.3.3",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "비나래",
+  "description": "HINANA STUDIO ECO desktop multitrack audio editor",
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "studio.hinana.eco",
+    "productName": "HINANA STUDIO ECO",
+    "copyright": "Copyright © 2026 비나래",
+    "directories": {
+      "output": "release"
+    },
+    "icon": "HinanaStudioIcon.png",
+    "extraResources": [
+      {
+        "from": "HinanaStudioIcon.png",
+        "to": "HinanaStudioIcon.png"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "HinanaStudioIcon.png",
+      "artifactName": "HINANA-STUDIO-ECO-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "HinanaStudioIcon.png",
+      "category": "public.app-category.music",
+      "artifactName": "HINANA-STUDIO-ECO-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "HinanaStudioIcon.png",
+      "category": "AudioVideo;Audio",
+      "artifactName": "HINANA-STUDIO-ECO-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "license": "LICENSE",
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HINANA STUDIO ECO"
+    }
+  },
+  "scripts": {
+    "dev": "npm run build:electron && concurrently -k \"vite\" \"wait-on http://localhost:5173 && node scripts/launch-electron.cjs\"",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "tsc && vite build && tsc -p electron/tsconfig.json",
+    "test:package": "npm run build:electron && node scripts/test-project-package.cjs",
+    "test:mp3": "node scripts/test-mp3-export.cjs",
+    "preview": "vite preview",
+    "start": "node scripts/launch-electron.cjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --x64 --arm64",
+    "dist:mac:x64": "npm run build && electron-builder --mac dmg zip --x64",
+    "dist:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --arm64",
+    "dist:linux:x64": "npm run build && electron-builder --linux AppImage deb --x64",
+    "dist:linux:arm64": "npm run build && electron-builder --linux AppImage deb --arm64"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "ffmpeg-static": "^5.3.0",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "^26.15.3",
+    "wait-on": "latest"
+  }
+}
