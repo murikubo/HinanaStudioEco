@@ -1847,22 +1847,6 @@ input[type="range"] {
   font-size: 10px;
 }
 
-.about-badges {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin-bottom: 22px;
-}
-
-.about-badges span {
-  padding: 5px 8px;
-  border: 1px solid #365047;
-  border-radius: 20px;
-  color: #82d9bd;
-  background: #1e302a;
-  font-size: 8px;
-}
-
 .about-dialog dl {
   margin: 0;
   border-top: 1px solid #343741;

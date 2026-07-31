@@ -143,6 +143,10 @@ const timeLabel = (value: number, detailed = false) => {
 };
 const dbLabel = (gain: number) =>
   gain <= 0.001 ? "-∞" : `${(20 * Math.log10(gain)).toFixed(1)} dB`;
+const displayVersion = packageInfo.version.replace(
+  /-alpha\.(\d+)$/i,
+  "-Alpha $1",
+);
 
 const starterTracks = (): Track[] => [];
 
@@ -2859,11 +2863,6 @@ export default function App() {
             </div>
             <h2 id="about-title">HINANA STUDIO ECO</h2>
             <p>소리를 자유롭게 다듬고 믹싱하는 데스크톱 오디오 스튜디오</p>
-            <div className="about-badges">
-              <span>멀티트랙</span>
-              <span>비파괴 편집</span>
-              <span>WAV 믹스</span>
-            </div>
             <dl>
               <div>
                 <dt>프로그램</dt>
@@ -2871,7 +2870,7 @@ export default function App() {
               </div>
               <div>
                 <dt>버전</dt>
-                <dd>Ver. {packageInfo.version}</dd>
+                <dd>Ver. {displayVersion}</dd>
               </div>
               <div>
                 <dt>오디오 엔진</dt>
