@@ -1269,8 +1269,24 @@ input[type="range"] {
 }
 
 .topbar button,
-.topbar input {
+.topbar input,
+.topbar select {
   -webkit-app-region: no-drag;
+}
+
+.recent-select,
+.transport-right > select {
+  height: 28px;
+  border: 1px solid #30343d;
+  border-radius: 5px;
+  color: #9da3af;
+  background: #17191f;
+  font-size: 9px;
+}
+
+.recent-select {
+  max-width: 112px;
+  margin-left: 4px;
 }
 
 .top-actions .export-button {
@@ -1493,6 +1509,95 @@ input[type="range"] {
 .transport .play-button,
 .transport .play-button:hover {
   color: #fff;
+}
+
+.transport .record-button {
+  color: #d66d70;
+}
+
+.transport .record-button.recording {
+  color: #fff;
+  background: #c43f45;
+  animation: record-pulse 1s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  50% { box-shadow: 0 0 0 4px rgba(196, 63, 69, 0.2); }
+}
+
+.trim-handle {
+  position: absolute;
+  z-index: 6;
+  width: 8px;
+  inset: 0 auto 0 0;
+  cursor: ew-resize;
+}
+
+.trim-handle.end {
+  inset: 0 0 0 auto;
+}
+
+.audio-clip.selected .trim-handle::after {
+  position: absolute;
+  width: 2px;
+  inset: 3px auto 3px 2px;
+  border-radius: 2px;
+  background: var(--clip-color);
+  content: "";
+}
+
+.audio-clip.selected .trim-handle.end::after {
+  inset: 3px 2px 3px auto;
+}
+
+.loop-region {
+  position: absolute;
+  z-index: 4;
+  height: 7px;
+  top: 27px;
+  border-inline: 2px solid #d9bb59;
+  background: rgba(217, 187, 89, 0.24);
+  pointer-events: none;
+}
+
+.loop-region input {
+  position: absolute;
+  width: 46px;
+  top: -23px;
+  padding: 1px 3px;
+  border: 0;
+  color: #d9bb59;
+  background: #202228;
+  font: 400 7px "DM Mono", monospace;
+  pointer-events: auto;
+}
+
+.loop-region input:last-child {
+  right: 0;
+  text-align: right;
+}
+
+.selection-range {
+  position: absolute;
+  z-index: 3;
+  top: 34px;
+  bottom: 0;
+  border-inline: 1px solid rgba(101, 183, 255, 0.8);
+  background: rgba(101, 183, 255, 0.12);
+  pointer-events: none;
+}
+
+.automation-marker {
+  position: absolute;
+  z-index: 5;
+  width: 7px;
+  height: 7px;
+  top: 3px;
+  margin-left: -3px;
+  border: 1px solid #0e1014;
+  background: #d58de8;
+  transform: rotate(45deg);
+  cursor: help;
 }
 
 .timeline-scroll {

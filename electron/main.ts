@@ -26,6 +26,23 @@ const ffmpegPath = app.isPackaged
 
 let mainWindow: BrowserWindow | null = null;
 let currentProjectPath: string | null = null;
+const recentFile = () => path.join(app.getPath("userData"), "recent-projects.json");
+
+const getRecentProjects = async () => {
+  try {
+    const items = JSON.parse(await fs.readFile(recentFile(), "utf8")) as string[];
+    return items.filter(existsSync).slice(0, 8);
+  } catch {
+    return [];
+  }
+};
+
+const rememberProject = async (filePath: string) => {
+  const items = await getRecentProjects();
+  const next = [filePath, ...items.filter((item) => item !== filePath)].slice(0, 8);
+  await fs.mkdir(path.dirname(recentFile()), { recursive: true });
+  await fs.writeFile(recentFile(), JSON.stringify(next, null, 2), "utf8");
+};
 
 const iconPath = () => {
   const candidates = [
@@ -61,8 +78,13 @@ const installMenu = () => {
         { label: "실행 취소", accelerator: "CmdOrCtrl+Z", click: () => send("undo") },
         { label: "다시 실행", accelerator: "CmdOrCtrl+Shift+Z", click: () => send("redo") },
         { type: "separator" },
+        { label: "복사", accelerator: "CmdOrCtrl+C", click: () => send("copy") },
+        { label: "붙여넣기", accelerator: "CmdOrCtrl+V", click: () => send("paste") },
+        { label: "복제", accelerator: "CmdOrCtrl+D", click: () => send("duplicate") },
+        { type: "separator" },
         { label: "재생 헤드에서 분할", accelerator: "S", click: () => send("split") },
         { label: "선택 삭제", accelerator: "Delete", click: () => send("delete") },
+        { label: "리플 삭제", accelerator: "Shift+Delete", click: () => send("rippleDelete") },
       ],
     },
     {
@@ -171,6 +193,7 @@ ipcMain.handle("project:save", async (_event, data: string) => {
     currentProjectPath = result.filePath;
   }
   await writeProjectPackage(currentProjectPath, data, app.getVersion());
+  await rememberProject(currentProjectPath);
   return currentProjectPath;
 });
 
@@ -188,6 +211,7 @@ ipcMain.handle("project:save-as", async (_event, data: string) => {
   if (result.canceled || !result.filePath) return null;
   currentProjectPath = result.filePath;
   await writeProjectPackage(currentProjectPath, data, app.getVersion());
+  await rememberProject(currentProjectPath);
   return currentProjectPath;
 });
 
@@ -199,11 +223,62 @@ ipcMain.handle("project:open", async () => {
   });
   if (result.canceled || !result.filePaths[0]) return null;
   currentProjectPath = result.filePaths[0];
+  await rememberProject(currentProjectPath);
   return {
     path: currentProjectPath,
     data: await readProjectPackage(currentProjectPath),
   };
 });
+
+ipcMain.handle("project:recent", () => getRecentProjects());
+
+ipcMain.handle("project:open-recent", async (_event, filePath: string) => {
+  if (!existsSync(filePath)) throw new Error("프로젝트 파일을 찾을 수 없습니다.");
+  currentProjectPath = filePath;
+  await rememberProject(filePath);
+  return { path: filePath, data: await readProjectPackage(filePath) };
+});
+
+ipcMain.handle("project:backup", async (_event, data: string) => {
+  if (!currentProjectPath)
+    throw new Error("먼저 프로젝트를 저장한 뒤 백업을 생성하세요.");
+  const backupDirectory = path.join(
+    path.dirname(currentProjectPath),
+    "HINANA ECO Backups",
+  );
+  await fs.mkdir(backupDirectory, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const parsed = path.parse(currentProjectPath);
+  const backupPath = path.join(backupDirectory, `${parsed.name}-${stamp}.heco`);
+  await writeProjectPackage(backupPath, data, app.getVersion());
+  return backupPath;
+});
+
+ipcMain.handle("audio:relink", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "원본 오디오 다시 연결",
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "오디오 파일",
+        extensions: ["wav", "mp3", "m4a", "aac", "ogg", "flac", "opus", "aif", "aiff"],
+      },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0] || null;
+});
+
+ipcMain.handle(
+  "recording:save",
+  async (_event, data: ArrayBuffer, suggestedName: string) => {
+    const directory = path.join(app.getPath("userData"), "Recordings");
+    await fs.mkdir(directory, { recursive: true });
+    const safeName = path.basename(suggestedName).replace(/[<>:"/\\|?*]/g, "-");
+    const outputPath = path.join(directory, safeName);
+    await fs.writeFile(outputPath, Buffer.from(data));
+    return outputPath;
+  },
+);
 
 const encodeMp3 = (
   wavData: ArrayBuffer,

@@ -9,6 +9,11 @@ interface Window {
     newProject(): Promise<boolean>;
     saveProject(data: string, saveAs?: boolean): Promise<string | null>;
     openProject(): Promise<{ path: string; data: string } | null>;
+    recentProjects(): Promise<string[]>;
+    openRecentProject(path: string): Promise<{ path: string; data: string }>;
+    backupProject(data: string): Promise<string>;
+    relinkAudio(): Promise<string | null>;
+    saveRecording(data: ArrayBuffer, suggestedName: string): Promise<string>;
     exportAudio(
       data: ArrayBuffer,
       suggestedName: string,

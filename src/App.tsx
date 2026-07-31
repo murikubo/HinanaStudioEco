@@ -25,6 +25,12 @@ import {
   Pause,
   Play,
   Plus,
+  Copy,
+  ClipboardPaste,
+  Mic,
+  Repeat2,
+  SaveAll,
+  Link2,
   Redo2,
   Rewind,
   Save,
@@ -52,6 +58,24 @@ type Track = {
   pan: number;
   muted: boolean;
   solo: boolean;
+  effects: TrackEffects;
+  automation: AutomationPoint[];
+};
+
+type TrackEffects = {
+  enabled: boolean;
+  low: number;
+  mid: number;
+  high: number;
+  compressor: number;
+  delay: number;
+  reverb: number;
+};
+
+type AutomationPoint = {
+  time: number;
+  gain: number;
+  pan: number;
 };
 
 type Clip = {
@@ -70,12 +94,16 @@ type Clip = {
 };
 
 type Project = {
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   name: string;
   sampleRate: number;
   bpm: number;
   tracks: Track[];
   clips: Clip[];
+  masterGain?: number;
+  loop?: { enabled: boolean; start: number; end: number };
+  playbackRate?: number;
+  metronome?: boolean;
 };
 
 type EffectDialogState =
@@ -83,6 +111,24 @@ type EffectDialogState =
   | { type: "fadeIn" | "fadeOut"; duration: number };
 
 const TRACK_COLORS = ["#59d9b0", "#a6dc67", "#65b7ff", "#d58de8", "#ff9b78"];
+const defaultEffects = (): TrackEffects => ({
+  enabled: true,
+  low: 0,
+  mid: 0,
+  high: 0,
+  compressor: 0,
+  delay: 0,
+  reverb: 0,
+});
+const normalizeTrack = (track: Partial<Track> & Pick<Track, "id" | "name" | "color">): Track => ({
+  gain: 1,
+  pan: 0,
+  muted: false,
+  solo: false,
+  ...track,
+  effects: { ...defaultEffects(), ...track.effects },
+  automation: track.automation || [],
+});
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -100,7 +146,7 @@ const dbLabel = (gain: number) =>
 
 const starterTracks = (): Track[] => [];
 
-const trackForAudio = (name: string, index: number): Track => ({
+const trackForAudio = (name: string, index: number): Track => normalizeTrack({
   id: uid(),
   name: name.replace(/\.[^.]+$/, "") || `오디오 ${index + 1}`,
   color: TRACK_COLORS[index % TRACK_COLORS.length],
@@ -246,6 +292,17 @@ function encodeWav(buffer: AudioBuffer) {
   return array;
 }
 
+const makeReverbImpulse = (context: BaseAudioContext) => {
+  const length = Math.floor(context.sampleRate * 1.35);
+  const impulse = context.createBuffer(2, length, context.sampleRate);
+  for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+    const data = impulse.getChannelData(channel);
+    for (let index = 0; index < length; index++)
+      data[index] = (Math.random() * 2 - 1) * Math.pow(1 - index / length, 2.6);
+  }
+  return impulse;
+};
+
 export default function App() {
   const [tracks, setTracks] = useState<Track[]>(starterTracks);
   const [clips, setClips] = useState<Clip[]>([]);
@@ -253,11 +310,19 @@ export default function App() {
   const [sampleRate, setSampleRate] = useState(48000);
   const [bpm, setBpm] = useState(120);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [snap, setSnap] = useState(true);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopStart, setLoopStart] = useState(0);
+  const [loopEnd, setLoopEnd] = useState(4);
+  const [metronome, setMetronome] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [recording, setRecording] = useState(false);
+  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
   const [tool, setTool] = useState<"select" | "cut">("select");
   const [notice, setNotice] = useState("오디오 파일을 가져와 세션을 시작하세요.");
   const [exporting, setExporting] = useState(false);
@@ -265,6 +330,7 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<"wav" | "mp3">("wav");
   const [mp3Bitrate, setMp3Bitrate] = useState(320);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [masterGain, setMasterGain] = useState(0.9);
   const [masterLevel, setMasterLevel] = useState(0.18);
   const [leftTab, setLeftTab] = useState<"media" | "edit" | "effects">("media");
@@ -288,8 +354,21 @@ export default function App() {
   const audioContext = useRef<AudioContext | null>(null);
   const buffers = useRef(new Map<string, AudioBuffer>());
   const activeSources = useRef<AudioBufferSourceNode[]>([]);
+  const activeClicks = useRef<OscillatorNode[]>([]);
   const activeTrackNodes = useRef(
-    new Map<string, { gain: GainNode; pan: StereoPannerNode }>(),
+    new Map<
+      string,
+      {
+        gain: GainNode;
+        pan: StereoPannerNode;
+        low: BiquadFilterNode;
+        mid: BiquadFilterNode;
+        high: BiquadFilterNode;
+        compressor: DynamicsCompressorNode;
+        delayWet: GainNode;
+        reverbWet: GainNode;
+      }
+    >(),
   );
   const activeClipGainNodes = useRef(new Map<string, GainNode>());
   const activeMasterNode = useRef<GainNode | null>(null);
@@ -300,6 +379,9 @@ export default function App() {
   const redoStack = useRef<string[]>([]);
   const restoring = useRef(false);
   const timelineScroll = useRef<HTMLDivElement>(null);
+  const clipboard = useRef<Clip[]>([]);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const recordingStartedAt = useRef(0);
 
   const selectedClip = clips.find((clip) => clip.id === selectedClipId);
   const selectedTrack = tracks.find(
@@ -326,16 +408,36 @@ export default function App() {
     tracksRef.current = tracks;
   }, [tracks]);
 
+  useEffect(() => {
+    void window.hinanaEco?.recentProjects().then(setRecentProjects);
+  }, []);
+
   const serialize = useCallback(
     (): Project => ({
-      formatVersion: 1,
+      formatVersion: 2,
       name: projectName,
       sampleRate,
       bpm,
       tracks,
       clips,
+      masterGain,
+      loop: { enabled: loopEnabled, start: loopStart, end: loopEnd },
+      playbackRate,
+      metronome,
     }),
-    [bpm, clips, projectName, sampleRate, tracks],
+    [
+      bpm,
+      clips,
+      loopEnabled,
+      loopEnd,
+      loopStart,
+      masterGain,
+      metronome,
+      playbackRate,
+      projectName,
+      sampleRate,
+      tracks,
+    ],
   );
 
   useEffect(() => {
@@ -351,15 +453,47 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [serialize]);
 
+  useEffect(() => {
+    if (restoring.current || !clips.length) return;
+    const timer = window.setTimeout(() => {
+      localStorage.setItem("hinana-eco:autosave", JSON.stringify(serialize()));
+      localStorage.setItem("hinana-eco:autosave-time", new Date().toISOString());
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [clips.length, serialize]);
+
+  useEffect(() => {
+    const raw = localStorage.getItem("hinana-eco:autosave");
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as Project;
+      if (!saved.clips?.length) return;
+      restore(raw);
+      history.current = [raw];
+      setNotice("자동 저장된 마지막 세션을 복구했습니다.");
+    } catch {
+      localStorage.removeItem("hinana-eco:autosave");
+    }
+    // Recovery is intentionally performed only once at startup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const restore = (raw: string) => {
     restoring.current = true;
     const project = JSON.parse(raw) as Project;
     setProjectName(project.name);
     setSampleRate(project.sampleRate);
     setBpm(project.bpm);
-    setTracks(project.tracks);
+    setTracks(project.tracks.map(normalizeTrack));
     setClips(project.clips);
+    setMasterGain(project.masterGain ?? 0.9);
+    setLoopEnabled(project.loop?.enabled ?? false);
+    setLoopStart(project.loop?.start ?? 0);
+    setLoopEnd(project.loop?.end ?? 4);
+    setPlaybackRate(project.playbackRate ?? 1);
+    setMetronome(project.metronome ?? false);
     setSelectedClipId(null);
+    setSelectedClipIds([]);
     window.setTimeout(() => {
       restoring.current = false;
     });
@@ -449,6 +583,7 @@ export default function App() {
       setTracks((items) => [...items, ...createdTracks]);
       setClips((items) => [...items, ...added]);
       setSelectedClipId(added[0].id);
+      setSelectedClipIds([added[0].id]);
       setSelectedTrackId(added[0].trackId);
       setNotice(`${added.length}개 파일을 세션에 추가했습니다.`);
     }
@@ -500,6 +635,7 @@ export default function App() {
       setTracks((items) => [...items, ...createdTracks]);
       setClips((items) => [...items, ...added]);
       setSelectedClipId(added[0].id);
+      setSelectedClipIds([added[0].id]);
       setSelectedTrackId(added[0].trackId);
       setNotice(
         failures.length
@@ -524,6 +660,14 @@ export default function App() {
       }
     });
     activeSources.current = [];
+    activeClicks.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {
+        // The click may already have ended.
+      }
+    });
+    activeClicks.current = [];
     activeClipGainNodes.current.clear();
     activeTrackNodes.current.forEach(({ gain, pan }) => {
       gain.disconnect();
@@ -553,19 +697,100 @@ export default function App() {
     activeMasterNode.current = master;
     activeAnalyser.current = analyser;
 
+    if (metronome) {
+      const beatLength = 60 / bpm;
+      const end = loopEnabled ? loopEnd : sessionEnd;
+      const firstBeat = Math.ceil(from / beatLength);
+      for (let beat = firstBeat; beat * beatLength < end; beat++) {
+        const oscillator = context.createOscillator();
+        const clickGain = context.createGain();
+        const when =
+          context.currentTime + (beat * beatLength - from) / playbackRate;
+        oscillator.frequency.value = beat % 4 === 0 ? 1320 : 880;
+        clickGain.gain.setValueAtTime(0.0001, when);
+        clickGain.gain.exponentialRampToValueAtTime(0.15, when + 0.002);
+        clickGain.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
+        oscillator.connect(clickGain).connect(master);
+        oscillator.start(when);
+        oscillator.stop(when + 0.05);
+        activeClicks.current.push(oscillator);
+      }
+    }
+
     const trackNodes = new Map<
       string,
-      { gain: GainNode; pan: StereoPannerNode }
+      {
+        gain: GainNode;
+        pan: StereoPannerNode;
+        low: BiquadFilterNode;
+        mid: BiquadFilterNode;
+        high: BiquadFilterNode;
+        compressor: DynamicsCompressorNode;
+        delayWet: GainNode;
+        reverbWet: GainNode;
+      }
     >();
     scheduledTracks.forEach((track) => {
       const trackGain = context.createGain();
+      const low = context.createBiquadFilter();
+      const mid = context.createBiquadFilter();
+      const high = context.createBiquadFilter();
+      const compressor = context.createDynamicsCompressor();
       const trackPan = context.createStereoPanner();
+      const delay = context.createDelay(1);
+      const delayWet = context.createGain();
+      const convolver = context.createConvolver();
+      const reverbWet = context.createGain();
       const audible =
         !track.muted && (!scheduledSoloActive || track.solo);
       trackGain.gain.value = audible ? track.gain : 0;
+      low.type = "lowshelf";
+      low.frequency.value = 180;
+      low.gain.value = track.effects.enabled ? track.effects.low : 0;
+      mid.type = "peaking";
+      mid.frequency.value = 1200;
+      mid.Q.value = 0.8;
+      mid.gain.value = track.effects.enabled ? track.effects.mid : 0;
+      high.type = "highshelf";
+      high.frequency.value = 6200;
+      high.gain.value = track.effects.enabled ? track.effects.high : 0;
+      compressor.threshold.value = -12 - track.effects.compressor * 28;
+      compressor.ratio.value = track.effects.enabled
+        ? 1 + track.effects.compressor * 11
+        : 1;
       trackPan.pan.value = track.pan;
-      trackGain.connect(trackPan).connect(master);
-      trackNodes.set(track.id, { gain: trackGain, pan: trackPan });
+      delay.delayTime.value = 0.28;
+      delayWet.gain.value = track.effects.enabled ? track.effects.delay : 0;
+      convolver.buffer = makeReverbImpulse(context);
+      reverbWet.gain.value = track.effects.enabled ? track.effects.reverb : 0;
+      trackGain.connect(low).connect(mid).connect(high).connect(compressor).connect(trackPan);
+      trackPan.connect(master);
+      trackPan.connect(delay).connect(delayWet).connect(master);
+      trackPan.connect(convolver).connect(reverbWet).connect(master);
+
+      const points = [...track.automation].sort((a, b) => a.time - b.time);
+      const previous = [...points].reverse().find((point) => point.time <= from);
+      if (previous) {
+        trackGain.gain.value = audible ? previous.gain : 0;
+        trackPan.pan.value = previous.pan;
+      }
+      points
+        .filter((point) => point.time > from)
+        .forEach((point) => {
+          const when = context.currentTime + (point.time - from) / playbackRate;
+          trackGain.gain.linearRampToValueAtTime(audible ? point.gain : 0, when);
+          trackPan.pan.linearRampToValueAtTime(point.pan, when);
+        });
+      trackNodes.set(track.id, {
+        gain: trackGain,
+        pan: trackPan,
+        low,
+        mid,
+        high,
+        compressor,
+        delayWet,
+        reverbWet,
+      });
     });
     activeTrackNodes.current = trackNodes;
 
@@ -580,11 +805,15 @@ export default function App() {
         const buffer = await decodePath(clip);
         const source = context.createBufferSource();
         source.buffer = buffer;
+        source.playbackRate.value = playbackRate;
         const gain = context.createGain();
         const beginsAt = Math.max(from, clip.start);
         const local = clip.offset + Math.max(0, from - clip.start);
-        const duration = clipEnd - beginsAt;
-        const startAt = context.currentTime + Math.max(0, clip.start - from);
+        const timelineEnd = loopEnabled ? Math.min(clipEnd, loopEnd) : clipEnd;
+        const duration = timelineEnd - beginsAt;
+        if (duration <= 0) continue;
+        const startAt =
+          context.currentTime + Math.max(0, clip.start - from) / playbackRate;
         const baseGain = clip.gain;
         gain.gain.setValueAtTime(baseGain, startAt);
         if (clip.fadeIn > 0) {
@@ -594,7 +823,7 @@ export default function App() {
             gain.gain.setValueAtTime(baseGain * ratio, startAt);
             gain.gain.linearRampToValueAtTime(
               baseGain,
-              startAt + (fadeEnd - beginsAt),
+              startAt + (fadeEnd - beginsAt) / playbackRate,
             );
           }
         }
@@ -605,9 +834,12 @@ export default function App() {
             localFadeStart > fadeStart
               ? baseGain * ((clipEnd - localFadeStart) / clip.fadeOut)
               : baseGain,
-            startAt + (localFadeStart - beginsAt),
+            startAt + (localFadeStart - beginsAt) / playbackRate,
           );
-          gain.gain.linearRampToValueAtTime(0, startAt + duration);
+          gain.gain.linearRampToValueAtTime(
+            0,
+            startAt + duration / playbackRate,
+          );
         }
         source.connect(gain).connect(trackNode.gain);
         activeClipGainNodes.current.set(clip.id, gain);
@@ -630,13 +862,20 @@ export default function App() {
       const context = getContext();
       const next =
         playbackStarted.current.timelineTime +
-        context.currentTime -
-        playbackStarted.current.contextTime;
+        (context.currentTime - playbackStarted.current.contextTime) *
+          playbackRate;
       setPlayhead(clamp(next, 0, totalDuration));
       setPlaying(false);
       stopSources();
     } else {
-      void schedulePlayback(playhead >= sessionEnd ? 0 : playhead);
+      const start =
+        loopEnabled && (playhead < loopStart || playhead >= loopEnd)
+          ? loopStart
+          : playhead >= sessionEnd
+            ? 0
+            : playhead;
+      setPlayhead(start);
+      void schedulePlayback(start);
     }
   };
 
@@ -646,8 +885,8 @@ export default function App() {
       const context = getContext();
       const next =
         playbackStarted.current.timelineTime +
-        context.currentTime -
-        playbackStarted.current.contextTime;
+        (context.currentTime - playbackStarted.current.contextTime) *
+          playbackRate;
       setPlayhead(next);
       const analyser = activeAnalyser.current;
       if (analyser) {
@@ -657,6 +896,11 @@ export default function App() {
         for (const sample of samples) squareSum += sample * sample;
         const rms = Math.sqrt(squareSum / samples.length);
         setMasterLevel(clamp(rms * 3.8, 0, 1));
+      }
+      if (loopEnabled && next >= loopEnd) {
+        setPlayhead(loopStart);
+        void schedulePlayback(loopStart);
+        return;
       }
       if (next >= sessionEnd) {
         setPlaying(false);
@@ -668,7 +912,7 @@ export default function App() {
     };
     animation.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animation.current);
-  }, [playing, sessionEnd]);
+  }, [loopEnabled, loopEnd, loopStart, playbackRate, playing, sessionEnd]);
 
   useEffect(() => {
     const context = audioContext.current;
@@ -684,6 +928,30 @@ export default function App() {
         0.012,
       );
       node.pan.pan.setTargetAtTime(track.pan, context.currentTime, 0.012);
+      const amount = track.effects.enabled ? 1 : 0;
+      node.low.gain.setTargetAtTime(track.effects.low * amount, context.currentTime, 0.012);
+      node.mid.gain.setTargetAtTime(track.effects.mid * amount, context.currentTime, 0.012);
+      node.high.gain.setTargetAtTime(track.effects.high * amount, context.currentTime, 0.012);
+      node.compressor.threshold.setTargetAtTime(
+        -12 - track.effects.compressor * 28,
+        context.currentTime,
+        0.012,
+      );
+      node.compressor.ratio.setTargetAtTime(
+        track.effects.enabled ? 1 + track.effects.compressor * 11 : 1,
+        context.currentTime,
+        0.012,
+      );
+      node.delayWet.gain.setTargetAtTime(
+        track.effects.delay * amount,
+        context.currentTime,
+        0.012,
+      );
+      node.reverbWet.gain.setTargetAtTime(
+        track.effects.reverb * amount,
+        context.currentTime,
+        0.012,
+      );
     }
   }, [tracks]);
 
@@ -736,6 +1004,25 @@ export default function App() {
       tracksRef.current = next;
       return next;
     });
+  const updateTrackEffect = (
+    id: string,
+    key: keyof TrackEffects,
+    value: number | boolean,
+  ) => {
+    const track = tracksRef.current.find((item) => item.id === id);
+    if (!track) return;
+    updateTrack(id, { effects: { ...track.effects, [key]: value } });
+  };
+  const addAutomationPoint = (track: Track) => {
+    const point = { time: playhead, gain: track.gain, pan: track.pan };
+    updateTrack(track.id, {
+      automation: [
+        ...track.automation.filter((item) => Math.abs(item.time - playhead) > 0.02),
+        point,
+      ].sort((a, b) => a.time - b.time),
+    });
+    setNotice(`${timeLabel(playhead, true)}에 볼륨·팬 자동화 지점을 추가했습니다.`);
+  };
 
   const openEffectDialog = (type: "normalize" | "fadeIn" | "fadeOut") => {
     if (!selectedClip) {
@@ -835,6 +1122,7 @@ export default function App() {
       items.flatMap((clip) => (clip.id === clipToSplit.id ? [left, right] : clip)),
     );
     setSelectedClipId(rightId);
+    setSelectedClipIds([rightId]);
     setNotice("클립을 재생 헤드에서 분할했습니다.");
   };
   const splitClip = () => {
@@ -852,10 +1140,87 @@ export default function App() {
   };
 
   const deleteSelected = () => {
-    if (!selectedClipId) return;
-    buffers.current.delete(selectedClipId);
-    setClips((items) => items.filter((clip) => clip.id !== selectedClipId));
+    const ids = selectedClipIds.length
+      ? selectedClipIds
+      : selectedClipId
+        ? [selectedClipId]
+        : [];
+    if (!ids.length) return;
+    ids.forEach((id) => buffers.current.delete(id));
+    setClips((items) => items.filter((clip) => !ids.includes(clip.id)));
     setSelectedClipId(null);
+    setSelectedClipIds([]);
+    setNotice(`${ids.length}개 클립을 삭제했습니다.`);
+  };
+
+  const rippleDeleteSelected = () => {
+    const ids = selectedClipIds.length
+      ? selectedClipIds
+      : selectedClipId
+        ? [selectedClipId]
+        : [];
+    if (!ids.length) return;
+    const removed = clips.filter((clip) => ids.includes(clip.id));
+    const byTrack = new Map<string, { start: number; end: number }>();
+    removed.forEach((clip) => {
+      const range = byTrack.get(clip.trackId);
+      byTrack.set(clip.trackId, {
+        start: Math.min(range?.start ?? Infinity, clip.start),
+        end: Math.max(range?.end ?? 0, clip.start + clip.duration),
+      });
+      buffers.current.delete(clip.id);
+    });
+    setClips((items) =>
+      items
+        .filter((clip) => !ids.includes(clip.id))
+        .map((clip) => {
+          const range = byTrack.get(clip.trackId);
+          if (!range || clip.start < range.end) return clip;
+          return { ...clip, start: Math.max(range.start, clip.start - (range.end - range.start)) };
+        }),
+    );
+    setSelectedClipId(null);
+    setSelectedClipIds([]);
+    setNotice(`${ids.length}개 클립을 리플 삭제했습니다.`);
+  };
+
+  const copySelected = () => {
+    const ids = selectedClipIds.length
+      ? selectedClipIds
+      : selectedClipId
+        ? [selectedClipId]
+        : [];
+    clipboard.current = clips.filter((clip) => ids.includes(clip.id));
+    setNotice(`${clipboard.current.length}개 클립을 복사했습니다.`);
+  };
+
+  const pasteClips = (at = playhead) => {
+    if (!clipboard.current.length) return;
+    const first = Math.min(...clipboard.current.map((clip) => clip.start));
+    const pasted = clipboard.current.map((clip) => {
+      const id = uid();
+      const source = buffers.current.get(clip.id);
+      if (source) buffers.current.set(id, source);
+      return {
+        ...clip,
+        id,
+        name: `${clip.name} · 복사본`,
+        start: Math.max(0, at + clip.start - first),
+      };
+    });
+    setClips((items) => [...items, ...pasted]);
+    setSelectedClipId(pasted[0].id);
+    setSelectedClipIds(pasted.map((clip) => clip.id));
+    setSelectedTrackId(pasted[0].trackId);
+    setNotice(`${pasted.length}개 클립을 붙여넣었습니다.`);
+  };
+
+  const duplicateSelected = () => {
+    copySelected();
+    const chosen = clipboard.current;
+    if (!chosen.length) return;
+    const end = Math.max(...chosen.map((clip) => clip.start + clip.duration));
+    pasteClips(end);
   };
 
   const deleteTrack = (trackId: string) => {
@@ -867,7 +1232,10 @@ export default function App() {
     setClips((items) => items.filter((clip) => clip.trackId !== trackId));
     setTracks((items) => items.filter((track) => track.id !== trackId));
     if (selectedTrackId === trackId) setSelectedTrackId(null);
-    if (selectedClip?.trackId === trackId) setSelectedClipId(null);
+    if (selectedClip?.trackId === trackId) {
+      setSelectedClipId(null);
+      setSelectedClipIds([]);
+    }
     setTrackMenu(null);
     setNotice(
       clipIds.length
@@ -883,7 +1251,7 @@ export default function App() {
 
   const addTrack = () => {
     const index = tracks.length;
-    const track: Track = {
+    const track: Track = normalizeTrack({
       id: uid(),
       name: `오디오 ${index + 1}`,
       color: TRACK_COLORS[index % TRACK_COLORS.length],
@@ -891,9 +1259,78 @@ export default function App() {
       pan: 0,
       muted: false,
       solo: false,
-    };
+    });
     setTracks((items) => [...items, track]);
     setSelectedTrackId(track.id);
+  };
+
+  const stopRecording = () => {
+    if (recorder.current?.state === "recording") recorder.current.stop();
+  };
+
+  const startRecording = async () => {
+    if (recording) {
+      stopRecording();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: Blob[] = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      recorder.current = mediaRecorder;
+      recordingStartedAt.current = playhead;
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        setRecording(false);
+        try {
+          const raw = await new Blob(chunks, { type: mediaRecorder.mimeType }).arrayBuffer();
+          const buffer = await getContext().decodeAudioData(raw.slice(0));
+          const wav = encodeWav(buffer);
+          const path = window.hinanaEco
+            ? await window.hinanaEco.saveRecording(
+                wav,
+                `Recording-${new Date().toISOString().replace(/[:.]/g, "-")}.wav`,
+              )
+            : undefined;
+          let target = tracksRef.current.find((track) => track.id === selectedTrackId);
+          if (!target) {
+            target = trackForAudio("Recording", tracksRef.current.length);
+            setTracks((items) => [...items, target!]);
+          }
+          const id = uid();
+          buffers.current.set(id, buffer);
+          const clip: Clip = {
+            id,
+            trackId: target.id,
+            name: `Recording ${new Date().toLocaleTimeString()}`,
+            path,
+            start: recordingStartedAt.current,
+            offset: 0,
+            duration: buffer.duration,
+            sourceDuration: buffer.duration,
+            gain: 1,
+            fadeIn: 0,
+            fadeOut: 0,
+            peaks: makePeaks(buffer),
+          };
+          setClips((items) => [...items, clip]);
+          setSelectedClipId(id);
+          setSelectedClipIds([id]);
+          setSelectedTrackId(target.id);
+          setNotice(`${buffer.duration.toFixed(1)}초 녹음을 추가했습니다.`);
+        } catch (error) {
+          setNotice(error instanceof Error ? error.message : "녹음을 처리하지 못했습니다.");
+        }
+      };
+      mediaRecorder.start();
+      setRecording(true);
+      setNotice("마이크 녹음 중입니다. 녹음 버튼을 다시 눌러 종료하세요.");
+    } catch {
+      setNotice("마이크 사용 권한을 허용해야 녹음할 수 있습니다.");
+    }
   };
 
   const saveProject = async (saveAs = false) => {
@@ -909,6 +1346,7 @@ export default function App() {
       );
       if (path) {
         setProjectPath(path);
+        setRecentProjects(await window.hinanaEco.recentProjects());
         setNotice("원본 오디오를 포함한 프로젝트 패키지를 저장했습니다.");
       } else {
         setNotice("프로젝트 저장을 취소했습니다.");
@@ -922,11 +1360,8 @@ export default function App() {
     }
   };
 
-  const openProject = async () => {
-    if (!window.hinanaEco) return;
-    try {
-      const result = await window.hinanaEco.openProject();
-      if (!result) return;
+  const loadProjectResult = async (result: { path: string; data: string }) => {
+      const desktop = window.hinanaEco;
       stopSources();
       setPlaying(false);
       buffers.current.clear();
@@ -935,7 +1370,8 @@ export default function App() {
       for (const clip of project.clips) {
         try {
           if (!clip.path) throw new Error();
-          const raw = await window.hinanaEco.readAudio(clip.path);
+          if (!desktop) throw new Error();
+          const raw = await desktop.readAudio(clip.path);
           const buffer = await getContext().decodeAudioData(raw.slice(0));
           buffers.current.set(clip.id, buffer);
           hydrated.push({
@@ -949,13 +1385,65 @@ export default function App() {
       restore(JSON.stringify({ ...project, clips: hydrated }));
       history.current = [JSON.stringify({ ...project, clips: hydrated })];
       setProjectPath(result.path);
+      setRecentProjects(await desktop?.recentProjects() || []);
       setNotice("프로젝트 패키지와 포함된 오디오를 열었습니다.");
+  };
+
+  const openProject = async () => {
+    if (!window.hinanaEco) return;
+    try {
+      const result = await window.hinanaEco.openProject();
+      if (!result) return;
+      await loadProjectResult(result);
     } catch (error) {
       setNotice(
         error instanceof Error
           ? `프로젝트 열기 실패: ${error.message}`
           : "프로젝트를 열지 못했습니다.",
       );
+    }
+  };
+
+  const openRecentProject = async (path: string) => {
+    if (!window.hinanaEco) return;
+    try {
+      await loadProjectResult(await window.hinanaEco.openRecentProject(path));
+    } catch (error) {
+      setRecentProjects(await window.hinanaEco.recentProjects());
+      setNotice(error instanceof Error ? error.message : "최근 프로젝트를 열지 못했습니다.");
+    }
+  };
+
+  const backupProject = async () => {
+    if (!window.hinanaEco) return;
+    try {
+      const path = await window.hinanaEco.backupProject(
+        JSON.stringify(serialize(), null, 2),
+      );
+      setNotice(`백업을 생성했습니다: ${path}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "백업을 생성하지 못했습니다.");
+    }
+  };
+
+  const relinkSelectedClip = async () => {
+    if (!selectedClip || !window.hinanaEco) return;
+    const path = await window.hinanaEco.relinkAudio();
+    if (!path) return;
+    try {
+      const raw = await window.hinanaEco.readAudio(path);
+      const buffer = await getContext().decodeAudioData(raw.slice(0));
+      buffers.current.set(selectedClip.id, buffer);
+      updateClip(selectedClip.id, {
+        path,
+        offset: 0,
+        duration: buffer.duration,
+        sourceDuration: buffer.duration,
+        peaks: makePeaks(buffer),
+      });
+      setNotice(`${selectedClip.name}의 원본 미디어를 다시 연결했습니다.`);
+    } catch {
+      setNotice("선택한 오디오 파일을 읽지 못했습니다.");
     }
   };
 
@@ -987,9 +1475,43 @@ export default function App() {
         const source = context.createBufferSource();
         source.buffer = buffer;
         const gain = context.createGain();
+        const trackGain = context.createGain();
         const pan = context.createStereoPanner();
+        const low = context.createBiquadFilter();
+        const mid = context.createBiquadFilter();
+        const high = context.createBiquadFilter();
+        const compressor = context.createDynamicsCompressor();
+        const delay = context.createDelay(1);
+        const delayWet = context.createGain();
+        const convolver = context.createConvolver();
+        const reverbWet = context.createGain();
         pan.pan.value = track.pan;
-        const value = clip.gain * track.gain;
+        trackGain.gain.value = track.gain;
+        low.type = "lowshelf";
+        low.frequency.value = 180;
+        low.gain.value = track.effects.enabled ? track.effects.low : 0;
+        mid.type = "peaking";
+        mid.frequency.value = 1200;
+        mid.Q.value = 0.8;
+        mid.gain.value = track.effects.enabled ? track.effects.mid : 0;
+        high.type = "highshelf";
+        high.frequency.value = 6200;
+        high.gain.value = track.effects.enabled ? track.effects.high : 0;
+        compressor.threshold.value = -12 - track.effects.compressor * 28;
+        compressor.ratio.value = track.effects.enabled
+          ? 1 + track.effects.compressor * 11
+          : 1;
+        delay.delayTime.value = 0.28;
+        delayWet.gain.value = track.effects.enabled ? track.effects.delay : 0;
+        convolver.buffer = makeReverbImpulse(context);
+        reverbWet.gain.value = track.effects.enabled ? track.effects.reverb : 0;
+        [...track.automation]
+          .sort((a, b) => a.time - b.time)
+          .forEach((point) => {
+            trackGain.gain.linearRampToValueAtTime(point.gain, point.time);
+            pan.pan.linearRampToValueAtTime(point.pan, point.time);
+          });
+        const value = clip.gain;
         gain.gain.setValueAtTime(clip.fadeIn > 0 ? 0 : value, clip.start);
         if (clip.fadeIn > 0)
           gain.gain.linearRampToValueAtTime(value, clip.start + clip.fadeIn);
@@ -1000,7 +1522,10 @@ export default function App() {
           );
           gain.gain.linearRampToValueAtTime(0, clip.start + clip.duration);
         }
-        source.connect(gain).connect(pan).connect(master);
+        source.connect(gain).connect(trackGain).connect(low).connect(mid).connect(high).connect(compressor).connect(pan);
+        pan.connect(master);
+        pan.connect(delay).connect(delayWet).connect(master);
+        pan.connect(convolver).connect(reverbWet).connect(master);
         source.start(clip.start, clip.offset, clip.duration);
       }
       const rendered = await context.startRendering();
@@ -1044,6 +1569,8 @@ export default function App() {
     setProjectPath(null);
     setPlayhead(0);
     setSelectedClipId(null);
+    setSelectedClipIds([]);
+    localStorage.removeItem("hinana-eco:autosave");
     setNotice("새 세션을 만들었습니다.");
   };
 
@@ -1076,11 +1603,26 @@ export default function App() {
         setNotice("자르기 도구를 취소했습니다.");
       } else if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey)
         splitClip();
-      else if (event.key === "Delete" || event.key === "Backspace")
-        deleteCurrentSelection();
+      else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        event.shiftKey ? rippleDeleteSelected() : deleteCurrentSelection();
+      }
       else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         event.shiftKey ? redo() : undo();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        copySelected();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteClips();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelected();
+      } else if (event.key.toLowerCase() === "l") {
+        setLoopEnabled((value) => !value);
+      } else if (event.key.toLowerCase() === "r") {
+        void startRecording();
       }
     };
     window.addEventListener("keydown", listener);
@@ -1098,8 +1640,12 @@ export default function App() {
         export: () => setShowExportDialog(true),
         undo,
         redo,
+        copy: copySelected,
+        paste: () => pasteClips(),
+        duplicate: duplicateSelected,
         split: splitClip,
         delete: deleteCurrentSelection,
+        rippleDelete: rippleDeleteSelected,
         about: () => setShowAbout(true),
       };
       actions[action]?.();
@@ -1116,11 +1662,25 @@ export default function App() {
     }
     event.currentTarget.setPointerCapture(event.pointerId);
     const origin = event.clientX;
-    const originalStart = clip.start;
+    const movingIds = selectedClipIds.includes(clip.id)
+      ? selectedClipIds
+      : [clip.id];
+    const originals = new Map(
+      clips
+        .filter((item) => movingIds.includes(item.id))
+        .map((item) => [item.id, item.start]),
+    );
     const onMove = (move: PointerEvent) => {
-      let next = originalStart + (move.clientX - origin) / pxPerSecond;
-      if (snap) next = Math.round(next * 4) / 4;
-      updateClip(clip.id, { start: Math.max(0, next) });
+      let delta = (move.clientX - origin) / pxPerSecond;
+      const anchor = (originals.get(clip.id) || 0) + delta;
+      if (snap) delta += Math.round(anchor * 4) / 4 - anchor;
+      setClips((items) =>
+        items.map((item) =>
+          originals.has(item.id)
+            ? { ...item, start: Math.max(0, (originals.get(item.id) || 0) + delta) }
+            : item,
+        ),
+      );
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
@@ -1143,11 +1703,56 @@ export default function App() {
     window.addEventListener("pointerup", onUp);
   };
 
-  const seekToPointer = (clientX: number) => {
+  const trimClip = (
+    event: React.PointerEvent<HTMLSpanElement>,
+    clip: Clip,
+    edge: "start" | "end",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const origin = event.clientX;
+    const original = { ...clip };
+    const onMove = (move: PointerEvent) => {
+      let delta = (move.clientX - origin) / pxPerSecond;
+      if (snap) delta = Math.round(delta * 4) / 4;
+      if (edge === "start") {
+        delta = clamp(delta, -original.offset, original.duration - 0.05);
+        updateClip(clip.id, {
+          start: Math.max(0, original.start + delta),
+          offset: Math.max(0, original.offset + delta),
+          duration: original.duration - delta,
+        });
+      } else {
+        updateClip(clip.id, {
+          duration: clamp(
+            original.duration + delta,
+            0.05,
+            original.sourceDuration - original.offset,
+          ),
+        });
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const timeAtPointer = (clientX: number) => {
     const scroller = timelineScroll.current;
-    if (!scroller) return;
+    if (!scroller) return 0;
     const rect = scroller.getBoundingClientRect();
-    const next = (clientX - rect.left + scroller.scrollLeft) / pxPerSecond;
+    return clamp(
+      (clientX - rect.left + scroller.scrollLeft) / pxPerSecond,
+      0,
+      totalDuration,
+    );
+  };
+
+  const seekToPointer = (clientX: number) => {
+    const next = timeAtPointer(clientX);
     setPlayhead(clamp(next, 0, totalDuration));
   };
 
@@ -1159,6 +1764,29 @@ export default function App() {
     )
       return;
     event.preventDefault();
+    if (event.shiftKey) {
+      const start = timeAtPointer(event.clientX);
+      setSelectionRange({ start, end: start });
+      const onSelect = (moveEvent: PointerEvent) => {
+        const end = timeAtPointer(moveEvent.clientX);
+        const left = Math.min(start, end);
+        const right = Math.max(start, end);
+        const ids = clipsRef.current
+          .filter((clip) => clip.start < right && clip.start + clip.duration > left)
+          .map((clip) => clip.id);
+        setSelectionRange({ start: left, end: right });
+        setSelectedClipIds(ids);
+        setSelectedClipId(ids[0] || null);
+      };
+      const finishSelection = () => {
+        window.removeEventListener("pointermove", onSelect);
+        window.removeEventListener("pointerup", finishSelection);
+      };
+      window.addEventListener("pointermove", onSelect);
+      window.addEventListener("pointerup", finishSelection);
+      return;
+    }
+    setSelectionRange(null);
     if (playing) {
       setPlaying(false);
       stopSources();
@@ -1234,6 +1862,19 @@ export default function App() {
           <button onClick={newProject}><Plus size={15} /> 새로 만들기</button>
           <button onClick={() => void openProject()}><FolderOpen size={15} /> 열기</button>
           <button onClick={() => void saveProject()}><Save size={15} /> 저장</button>
+          {!!recentProjects.length && (
+            <select
+              className="recent-select"
+              aria-label="최근 프로젝트"
+              value=""
+              onChange={(event) => void openRecentProject(event.target.value)}
+            >
+              <option value="" disabled>최근 프로젝트</option>
+              {recentProjects.map((path) => (
+                <option value={path} key={path}>{path.split(/[\\/]/).pop()}</option>
+              ))}
+            </select>
+          )}
         </nav>
         <div className="project-title">
           <input
@@ -1244,6 +1885,7 @@ export default function App() {
           <span>{projectPath ? "저장됨" : "로컬 세션"}</span>
         </div>
         <div className="top-actions">
+          <button className="icon-button" onClick={() => void backupProject()} title="프로젝트 백업"><SaveAll size={17} /></button>
           <button className="icon-button" onClick={undo} title="실행 취소"><Undo2 size={17} /></button>
           <button className="icon-button" onClick={redo} title="다시 실행"><Redo2 size={17} /></button>
           <button className="import-button" onClick={() => void importFromDesktop()}>
@@ -1299,7 +1941,7 @@ export default function App() {
                 </button>
                 <div className="media-bin">
                   {clips.length ? clips.map((clip) => (
-                    <button key={clip.id} onClick={() => { setSelectedClipId(clip.id); setSelectedTrackId(clip.trackId); }}>
+                    <button key={clip.id} onClick={() => { setSelectedClipId(clip.id); setSelectedClipIds([clip.id]); setSelectedTrackId(clip.trackId); }}>
                       <span><Waveform peaks={clip.peaks.slice(0, 80)} color={tracks.find((track) => track.id === clip.trackId)?.color || "#59d9b0"} fadeIn={0} fadeOut={0} /></span>
                       <div><strong>{clip.name}</strong><small>{timeLabel(clip.sourceDuration)} · 오디오</small></div>
                     </button>
@@ -1344,11 +1986,13 @@ export default function App() {
                   onClick={() => {
                     setSelectedTrackId(track.id);
                     setSelectedClipId(null);
+                    setSelectedClipIds([]);
                   }}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setSelectedTrackId(track.id);
                     setSelectedClipId(null);
+                    setSelectedClipIds([]);
                     setTrackMenu({ x: event.clientX, y: event.clientY, trackId: track.id });
                   }}
                 >
@@ -1382,6 +2026,8 @@ export default function App() {
               <button className={snap ? "active" : ""} onClick={() => setSnap((value) => !value)} title="스냅">
                 <Magnet size={17} />
               </button>
+              <button onClick={copySelected} title="복사 (Cmd/Ctrl+C)"><Copy size={16} /></button>
+              <button onClick={() => pasteClips()} title="붙여넣기 (Cmd/Ctrl+V)"><ClipboardPaste size={16} /></button>
             </div>
             <div className="transport-center">
               <button onClick={() => setPlayhead(Math.max(0, playhead - 5))}><Rewind size={17} /></button>
@@ -1389,6 +2035,11 @@ export default function App() {
               <button className="play-button" onClick={togglePlayback}>
                 {playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
               </button>
+              <button
+                className={recording ? "record-button recording" : "record-button"}
+                onClick={() => void startRecording()}
+                title="마이크 녹음 (R)"
+              ><Mic size={17} /></button>
               <button onClick={() => setPlayhead(Math.min(totalDuration, playhead + 5))}><FastForward size={17} /></button>
               <div className="time-display">
                 <strong>{timeLabel(playhead, true)}</strong>
@@ -1396,6 +2047,16 @@ export default function App() {
               </div>
             </div>
             <div className="transport-right">
+              <button className={metronome ? "active" : ""} onClick={() => setMetronome((value) => !value)} title="메트로놈">M</button>
+              <button className={loopEnabled ? "active" : ""} onClick={() => setLoopEnabled((value) => !value)} title="구간 반복 (L)"><Repeat2 size={17} /></button>
+              <select value={playbackRate} onChange={(event) => setPlaybackRate(Number(event.target.value))} title="재생 속도">
+                <option value=".5">0.5×</option>
+                <option value=".75">0.75×</option>
+                <option value="1">1×</option>
+                <option value="1.25">1.25×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
               <label>{bpm}<span>BPM</span><input type="number" value={bpm} onChange={(e) => setBpm(clamp(Number(e.target.value), 20, 300))} /></label>
               <span className="divider" />
               <button onClick={() => setZoom((value) => clamp(value - 0.2, 0.35, 3))}><ZoomOut size={17} /></button>
@@ -1419,6 +2080,47 @@ export default function App() {
                     </span>
                   ))}
                 </div>
+                {loopEnabled && (
+                  <div
+                    className="loop-region"
+                    style={{
+                      left: loopStart * pxPerSecond,
+                      width: Math.max(4, (loopEnd - loopStart) * pxPerSecond),
+                    }}
+                  >
+                    <input
+                      aria-label="반복 시작"
+                      type="number"
+                      min="0"
+                      step=".25"
+                      value={loopStart}
+                      onChange={(event) =>
+                        setLoopStart(clamp(Number(event.target.value), 0, loopEnd - 0.25))
+                      }
+                    />
+                    <input
+                      aria-label="반복 끝"
+                      type="number"
+                      min={loopStart + 0.25}
+                      step=".25"
+                      value={loopEnd}
+                      onChange={(event) =>
+                        setLoopEnd(Math.max(loopStart + 0.25, Number(event.target.value)))
+                      }
+                    />
+                  </div>
+                )}
+                {selectionRange && (
+                  <div
+                    className="selection-range"
+                    style={{
+                      left: Math.min(selectionRange.start, selectionRange.end) * pxPerSecond,
+                      width:
+                        Math.abs(selectionRange.end - selectionRange.start) *
+                        pxPerSecond,
+                    }}
+                  />
+                )}
                 <div
                   className="playhead"
                   style={{ left: playhead * pxPerSecond }}
@@ -1429,10 +2131,22 @@ export default function App() {
                 ><i /></div>
                 {tracks.map((track, trackIndex) => (
                   <div className="timeline-row" key={track.id}>
+                    {track.automation.map((point) => (
+                      <span
+                        className="automation-marker"
+                        key={`${point.time}-${point.gain}-${point.pan}`}
+                        style={{ left: point.time * pxPerSecond }}
+                        title={`${timeLabel(point.time, true)} · ${dbLabel(point.gain)} · Pan ${point.pan.toFixed(2)}`}
+                      />
+                    ))}
                     {clips.filter((clip) => clip.trackId === track.id).map((clip) => (
                       <div
                         key={clip.id}
-                        className={`audio-clip ${selectedClipId === clip.id ? "selected" : ""}`}
+                        className={`audio-clip ${
+                          selectedClipId === clip.id || selectedClipIds.includes(clip.id)
+                            ? "selected"
+                            : ""
+                        }`}
                         style={{
                           left: clip.start * pxPerSecond,
                           width: Math.max(24, clip.duration * pxPerSecond),
@@ -1453,6 +2167,15 @@ export default function App() {
                             setTool("select");
                             return;
                           }
+                          if (event.metaKey || event.ctrlKey || event.shiftKey) {
+                            setSelectedClipIds((ids) =>
+                              ids.includes(clip.id)
+                                ? ids.filter((id) => id !== clip.id)
+                                : [...ids, clip.id],
+                            );
+                          } else {
+                            setSelectedClipIds([clip.id]);
+                          }
                           setSelectedClipId(clip.id);
                           setSelectedTrackId(track.id);
                         }}
@@ -1461,8 +2184,10 @@ export default function App() {
                         }}
                         onPointerDown={(event) => moveClip(event, clip)}
                       >
+                        <span className="trim-handle start" onPointerDown={(event) => trimClip(event, clip, "start")} />
                         <div className="clip-title"><Music2 size={12} /><span>{clip.name}</span><small>{timeLabel(clip.duration)}</small></div>
                         <Waveform peaks={clip.peaks} color={track.color} fadeIn={clip.fadeIn} fadeOut={clip.fadeOut} />
+                        <span className="trim-handle end" onPointerDown={(event) => trimClip(event, clip, "end")} />
                       </div>
                     ))}
                     {!clips.some((clip) => clip.trackId === track.id) && trackIndex === 0 && (
@@ -1492,11 +2217,13 @@ export default function App() {
                   onClick={() => {
                     setSelectedTrackId(track.id);
                     setSelectedClipId(null);
+                    setSelectedClipIds([]);
                   }}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setSelectedTrackId(track.id);
                     setSelectedClipId(null);
+                    setSelectedClipIds([]);
                     setTrackMenu({ x: event.clientX, y: event.clientY, trackId: track.id });
                   }}
                 >
@@ -1527,7 +2254,7 @@ export default function App() {
         <aside className="right-panel">
           <div className="inspector-heading">
             <div><SlidersHorizontal size={17} /><span>인스펙터</span></div>
-            {selectedClip && <button onClick={() => setSelectedClipId(null)}><X size={16} /></button>}
+            {selectedClip && <button onClick={() => { setSelectedClipId(null); setSelectedClipIds([]); }}><X size={16} /></button>}
           </div>
           {selectedClip && selectedTrack ? (
             <div className="inspector-content">
@@ -1559,9 +2286,65 @@ export default function App() {
                   <button onClick={() => openEffectDialog("fadeOut")}>Fade out</button>
                   <button onClick={() => openEffectDialog("normalize")}><Gauge size={14} /> Normalize</button>
                   <button onClick={() => updateClip(selectedClip.id, { gain: 0 })}><VolumeX size={14} /> Silence</button>
+                  <button onClick={duplicateSelected}><Copy size={14} /> 복제</button>
+                  <button onClick={() => void relinkSelectedClip()}><Link2 size={14} /> 재연결</button>
+                  <button onClick={rippleDeleteSelected}><Trash2 size={14} /> 리플 삭제</button>
                 </div>
               </section>
               <button className="delete-button" onClick={deleteSelected}><Trash2 size={15} /> 선택한 클립 삭제</button>
+            </div>
+          ) : selectedTrack ? (
+            <div className="inspector-content">
+              <div className="selected-name">
+                <span style={{ background: selectedTrack.color }}><AudioLines size={18} /></span>
+                <div><strong>{selectedTrack.name}</strong><small>트랙 효과 · 자동화 {selectedTrack.automation.length}개</small></div>
+              </div>
+              <section className="property-section">
+                <h3>효과 체인</h3>
+                <button
+                  className="wide-tool"
+                  onClick={() => updateTrackEffect(selectedTrack.id, "enabled", !selectedTrack.effects.enabled)}
+                >
+                  {selectedTrack.effects.enabled ? "효과 체인 켜짐" : "효과 체인 꺼짐"}
+                </button>
+                {([
+                  ["low", "저음 EQ", -12, 12],
+                  ["mid", "중음 EQ", -12, 12],
+                  ["high", "고음 EQ", -12, 12],
+                  ["compressor", "컴프레서", 0, 1],
+                  ["delay", "딜레이", 0, 0.65],
+                  ["reverb", "리버브", 0, 0.65],
+                ] as const).map(([key, label, min, max]) => (
+                  <label key={key}>
+                    <span>{label}</span>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      step=".01"
+                      value={selectedTrack.effects[key]}
+                      onChange={(event) =>
+                        updateTrackEffect(selectedTrack.id, key, Number(event.target.value))
+                      }
+                    />
+                    <em>{key === "low" || key === "mid" || key === "high" ? "dB" : Math.round(selectedTrack.effects[key] * 100)}</em>
+                  </label>
+                ))}
+              </section>
+              <section className="property-section">
+                <h3>자동화</h3>
+                <button className="wide-tool" onClick={() => addAutomationPoint(selectedTrack)}>
+                  <CirclePlus size={15} /> 현재 재생 헤드에 볼륨·팬 지점 추가
+                </button>
+                {!!selectedTrack.automation.length && (
+                  <button
+                    className="wide-tool"
+                    onClick={() => updateTrack(selectedTrack.id, { automation: [] })}
+                  >
+                    <Trash2 size={15} /> 자동화 모두 지우기
+                  </button>
+                )}
+              </section>
             </div>
           ) : (
             <div className="empty-inspector">

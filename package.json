@@ -1,6 +1,6 @@
 {
   "name": "hinana-studio-eco",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "author": "비나래",
@@ -55,6 +55,9 @@
       ],
       "icon": "HinanaStudioEcoIcon.png",
       "category": "public.app-category.music",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "HINANA STUDIO ECO에서 오디오 트랙을 녹음하려면 마이크 접근이 필요합니다."
+      },
       "artifactName": "HINANA-STUDIO-ECO-${version}-${arch}.${ext}"
     },
     "linux": {

@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld("hinanaEco", {
   saveProject: (data: string, saveAs = false) =>
     ipcRenderer.invoke(saveAs ? "project:save-as" : "project:save", data),
   openProject: () => ipcRenderer.invoke("project:open"),
+  recentProjects: () => ipcRenderer.invoke("project:recent"),
+  openRecentProject: (filePath: string) =>
+    ipcRenderer.invoke("project:open-recent", filePath),
+  backupProject: (data: string) => ipcRenderer.invoke("project:backup", data),
+  relinkAudio: () => ipcRenderer.invoke("audio:relink"),
+  saveRecording: (data: ArrayBuffer, suggestedName: string) =>
+    ipcRenderer.invoke("recording:save", data, suggestedName),
   exportAudio: (
     data: ArrayBuffer,
     suggestedName: string,
