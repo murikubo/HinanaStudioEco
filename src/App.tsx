@@ -905,7 +905,9 @@ export default function App() {
       }
       if (loopEnabled && next >= loopEnd) {
         setPlayhead(loopStart);
-        void schedulePlayback(loopStart);
+        void schedulePlayback(loopStart).then(() => {
+          animation.current = requestAnimationFrame(tick);
+        });
         return;
       }
       if (next >= sessionEnd) {
@@ -1777,6 +1779,44 @@ export default function App() {
     );
   };
 
+  const dragLoopBoundary = (
+    event: React.PointerEvent<HTMLSpanElement>,
+    edge: "start" | "end",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const onMove = (move: PointerEvent) => {
+      let next = timeAtPointer(move.clientX);
+      if (snap) next = Math.round(next * 4) / 4;
+      if (edge === "start")
+        setLoopStart(clamp(next, 0, loopEnd - 0.05));
+      else setLoopEnd(Math.max(loopStart + 0.05, next));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const useSelectionAsLoop = () => {
+    if (!selectionRange) {
+      setNotice("Shift를 누른 채 타임라인을 드래그해 범위를 먼저 선택하세요.");
+      return;
+    }
+    const start = Math.min(selectionRange.start, selectionRange.end);
+    const end = Math.max(selectionRange.start, selectionRange.end);
+    if (end - start < 0.05) {
+      setNotice("반복할 범위를 조금 더 넓게 선택하세요.");
+      return;
+    }
+    setLoopStart(start);
+    setLoopEnd(end);
+    setLoopEnabled(true);
+    setNotice(`${timeLabel(start, true)}–${timeLabel(end, true)} 구간을 반복합니다.`);
+  };
+
   const seekToPointer = (clientX: number) => {
     const next = timeAtPointer(clientX);
     setPlayhead(clamp(next, 0, totalDuration));
@@ -2094,7 +2134,7 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="center-stage">
+        <section className={`center-stage${loopEnabled ? " loop-active" : ""}`}>
           <div className="transport">
             <div className="transport-left">
               <button className={tool === "select" ? "active" : ""} onClick={() => setTool("select")} title="선택 도구">
@@ -2149,6 +2189,51 @@ export default function App() {
               <button onClick={() => setZoom((value) => clamp(value + 0.2, 0.35, 3))}><ZoomIn size={17} /></button>
             </div>
           </div>
+          {loopEnabled && (
+            <div className="loop-controls-strip">
+              <Repeat2 size={15} />
+              <strong>구간 반복</strong>
+              <label>
+                시작
+                <input
+                  type="number"
+                  min="0"
+                  max={loopEnd - 0.05}
+                  step=".05"
+                  value={Number(loopStart.toFixed(2))}
+                  onChange={(event) =>
+                    setLoopStart(clamp(Number(event.target.value), 0, loopEnd - 0.05))
+                  }
+                />
+              </label>
+              <button onClick={() => setLoopStart(clamp(playhead, 0, loopEnd - 0.05))}>
+                재생 위치 → 시작
+              </button>
+              <label>
+                끝
+                <input
+                  type="number"
+                  min={loopStart + 0.05}
+                  step=".05"
+                  value={Number(loopEnd.toFixed(2))}
+                  onChange={(event) =>
+                    setLoopEnd(Math.max(loopStart + 0.05, Number(event.target.value)))
+                  }
+                />
+              </label>
+              <button onClick={() => setLoopEnd(Math.max(loopStart + 0.05, playhead))}>
+                재생 위치 → 끝
+              </button>
+              <button
+                disabled={!selectionRange}
+                onClick={useSelectionAsLoop}
+                title="Shift를 누른 채 타임라인을 드래그해 선택한 범위를 사용합니다."
+              >
+                선택 범위 사용
+              </button>
+              <span>{(loopEnd - loopStart).toFixed(2)}초</span>
+            </div>
+          )}
 
           <div className="timeline-shell">
             <div className="timeline-label-spacer"><span>TRACK</span><span>OUTPUT</span></div>
@@ -2173,26 +2258,14 @@ export default function App() {
                       width: Math.max(4, (loopEnd - loopStart) * pxPerSecond),
                     }}
                   >
-                    <input
-                      aria-label="반복 시작"
-                      type="number"
-                      min="0"
-                      step=".25"
-                      value={loopStart}
-                      onChange={(event) =>
-                        setLoopStart(clamp(Number(event.target.value), 0, loopEnd - 0.25))
-                      }
-                    />
-                    <input
-                      aria-label="반복 끝"
-                      type="number"
-                      min={loopStart + 0.25}
-                      step=".25"
-                      value={loopEnd}
-                      onChange={(event) =>
-                        setLoopEnd(Math.max(loopStart + 0.25, Number(event.target.value)))
-                      }
-                    />
+                    <span
+                      className="loop-handle start"
+                      onPointerDown={(event) => dragLoopBoundary(event, "start")}
+                    ><i>IN</i></span>
+                    <span
+                      className="loop-handle end"
+                      onPointerDown={(event) => dragLoopBoundary(event, "end")}
+                    ><i>OUT</i></span>
                   </div>
                 )}
                 {selectionRange && (

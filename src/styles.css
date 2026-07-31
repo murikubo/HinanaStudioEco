@@ -1547,6 +1547,76 @@ input[type="range"] {
   background: #090b0e;
 }
 
+.center-stage.loop-active {
+  grid-template-rows: 60px 38px minmax(0, 1fr);
+}
+
+.loop-controls-strip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  overflow: hidden;
+  border-bottom: 1px solid #383422;
+  color: #d9bb59;
+  background: #1d1b15;
+  font-size: 9px;
+}
+
+.loop-controls-strip > strong {
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.loop-controls-strip label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #9e9270;
+  white-space: nowrap;
+}
+
+.loop-controls-strip input {
+  width: 58px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid #4d4631;
+  border-radius: 4px;
+  color: #e1cc83;
+  background: #12130f;
+  font: 500 9px "DM Mono", monospace;
+}
+
+.loop-controls-strip button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #4d4631;
+  border-radius: 4px;
+  color: #b9aa7b;
+  background: #252218;
+  font-size: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.loop-controls-strip button:hover {
+  color: #fff0b3;
+  background: #35301f;
+}
+
+.loop-controls-strip button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.loop-controls-strip > span:last-child {
+  margin-left: auto;
+  color: #81785d;
+  font: 500 8px "DM Mono", monospace;
+  white-space: nowrap;
+}
+
 .transport {
   background: #14161b;
 }
@@ -1598,28 +1668,48 @@ input[type="range"] {
 .loop-region {
   position: absolute;
   z-index: 4;
-  height: 7px;
-  top: 27px;
+  height: 34px;
+  top: 0;
   border-inline: 2px solid #d9bb59;
-  background: rgba(217, 187, 89, 0.24);
+  background: rgba(217, 187, 89, 0.12);
   pointer-events: none;
 }
 
-.loop-region input {
+.loop-handle {
   position: absolute;
-  width: 46px;
-  top: -23px;
-  padding: 1px 3px;
-  border: 0;
+  width: 10px;
+  inset: 0 auto 0 -6px;
   color: #d9bb59;
-  background: #202228;
-  font: 400 7px "DM Mono", monospace;
   pointer-events: auto;
+  cursor: ew-resize;
 }
 
-.loop-region input:last-child {
-  right: 0;
-  text-align: right;
+.loop-handle.end {
+  inset: 0 -6px 0 auto;
+}
+
+.loop-handle::after {
+  position: absolute;
+  width: 4px;
+  inset: 0 auto 0 3px;
+  background: #d9bb59;
+  content: "";
+}
+
+.loop-handle i {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  padding: 1px 3px;
+  color: #17150e;
+  background: #d9bb59;
+  font: 700 6px Inter, sans-serif;
+  font-style: normal;
+}
+
+.loop-handle.end i {
+  right: 6px;
+  left: auto;
 }
 
 .selection-range {
