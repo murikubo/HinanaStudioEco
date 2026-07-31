@@ -154,20 +154,24 @@ input:focus-visible {
 }
 
 .project-title input {
-  width: 240px;
+  width: min(100%, 320px);
   padding: 0;
   border: 0;
   background: transparent;
   color: #eef0ed;
   text-align: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .project-title span {
+  max-width: 320px;
+  overflow: hidden;
   color: #6c706e;
   font-size: 9px;
   margin-top: 3px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .top-actions {

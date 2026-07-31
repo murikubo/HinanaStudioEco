@@ -306,7 +306,7 @@ const makeReverbImpulse = (context: BaseAudioContext) => {
 export default function App() {
   const [tracks, setTracks] = useState<Track[]>(starterTracks);
   const [clips, setClips] = useState<Clip[]>([]);
-  const [projectName, setProjectName] = useState("Untitled Session");
+  const [projectName, setProjectName] = useState("새 프로젝트");
   const [sampleRate, setSampleRate] = useState(48000);
   const [bpm, setBpm] = useState(120);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -1593,7 +1593,7 @@ export default function App() {
     setTracks(starterTracks());
     setClips([]);
     buffers.current.clear();
-    setProjectName("Untitled Session");
+    setProjectName("새 프로젝트");
     setProjectPath(null);
     setPlayhead(0);
     setSelectedClipId(null);
@@ -2006,8 +2006,14 @@ export default function App() {
             value={projectName}
             onChange={(event) => setProjectName(event.target.value)}
             aria-label="프로젝트 이름"
+            placeholder="프로젝트 이름"
+            spellCheck={false}
           />
-          <span>{projectPath ? "저장됨" : "로컬 세션"}</span>
+          <span>
+            {projectPath
+              ? projectPath.split(/[\\/]/).pop()
+              : "저장되지 않음"}
+          </span>
         </div>
         <div className="top-actions">
           <button className="icon-button" onClick={() => void backupProject()} title="프로젝트 백업"><SaveAll size={17} /></button>
