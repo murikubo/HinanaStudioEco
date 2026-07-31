@@ -41,7 +41,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import appIconUrl from "../HinanaStudioIcon.png";
+import appIconUrl from "../HinanaStudioEcoIcon.png";
 import packageInfo from "../package.json";
 
 type Track = {
@@ -1194,7 +1194,7 @@ export default function App() {
 
   return (
     <div
-      className="app-shell"
+      className={`app-shell${window.hinanaEco?.platform === "darwin" ? " platform-darwin" : ""}`}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();

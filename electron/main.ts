@@ -29,8 +29,8 @@ let currentProjectPath: string | null = null;
 
 const iconPath = () => {
   const candidates = [
-    path.join(process.resourcesPath, "HinanaStudioIcon.png"),
-    path.join(app.getAppPath(), "HinanaStudioIcon.png"),
+    path.join(process.resourcesPath, "HinanaStudioEcoIcon.png"),
+    path.join(app.getAppPath(), "HinanaStudioEcoIcon.png"),
   ];
   return candidates.find(existsSync);
 };

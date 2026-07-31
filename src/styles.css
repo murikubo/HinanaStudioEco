@@ -1264,6 +1264,10 @@ input[type="range"] {
   -webkit-app-region: drag;
 }
 
+.platform-darwin .topbar {
+  padding-left: 88px;
+}
+
 .topbar button,
 .topbar input {
   -webkit-app-region: no-drag;
