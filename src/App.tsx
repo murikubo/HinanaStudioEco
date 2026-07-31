@@ -323,6 +323,11 @@ export default function App() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [recording, setRecording] = useState(false);
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
+  const [timelineScrollbar, setTimelineScrollbar] = useState({
+    left: 0,
+    viewport: 1,
+    content: 1,
+  });
   const [tool, setTool] = useState<"select" | "cut">("select");
   const [notice, setNotice] = useState("오디오 파일을 가져와 세션을 시작하세요.");
   const [exporting, setExporting] = useState(false);
@@ -379,6 +384,7 @@ export default function App() {
   const redoStack = useRef<string[]>([]);
   const restoring = useRef(false);
   const timelineScroll = useRef<HTMLDivElement>(null);
+  const timelineScrollbarTrack = useRef<HTMLDivElement>(null);
   const clipboard = useRef<Clip[]>([]);
   const recorder = useRef<MediaRecorder | null>(null);
   const recordingStartedAt = useRef(0);
@@ -987,6 +993,26 @@ export default function App() {
       scroller.scrollLeft = Math.max(0, playheadX - visibleWidth * 0.12);
     }
   }, [playhead, pxPerSecond]);
+
+  useEffect(() => {
+    const scroller = timelineScroll.current;
+    if (!scroller) return;
+    const sync = () =>
+      setTimelineScrollbar({
+        left: scroller.scrollLeft,
+        viewport: scroller.clientWidth,
+        content: Math.max(scroller.clientWidth, scroller.scrollWidth),
+      });
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(scroller);
+    if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    scroller.addEventListener("scroll", sync, { passive: true });
+    return () => {
+      observer.disconnect();
+      scroller.removeEventListener("scroll", sync);
+    };
+  }, [pxPerSecond, totalDuration, tracks.length]);
 
   const updateClip = (id: string, changes: Partial<Clip>) =>
     setClips((items) => {
@@ -1801,6 +1827,51 @@ export default function App() {
     window.addEventListener("pointerup", onUp);
   };
 
+  const scrollTimelineFromTrack = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest(".timeline-scroll-thumb")
+    )
+      return;
+    const scroller = timelineScroll.current;
+    const track = timelineScrollbarTrack.current;
+    if (!scroller || !track) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    scroller.scrollLeft = clamp(
+      ratio * timelineScrollbar.content - timelineScrollbar.viewport / 2,
+      0,
+      Math.max(0, timelineScrollbar.content - timelineScrollbar.viewport),
+    );
+  };
+
+  const dragTimelineScrollbar = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const scroller = timelineScroll.current;
+    const track = timelineScrollbarTrack.current;
+    if (!scroller || !track) return;
+    const origin = event.clientX;
+    const originalScroll = scroller.scrollLeft;
+    const thumbWidth = track.clientWidth * (timelineThumbWidth / 100);
+    const scale =
+      Math.max(0, timelineScrollbar.content - timelineScrollbar.viewport) /
+      Math.max(1, track.clientWidth - thumbWidth);
+    const onMove = (move: PointerEvent) => {
+      scroller.scrollLeft = clamp(
+        originalScroll + (move.clientX - origin) * scale,
+        0,
+        Math.max(0, timelineScrollbar.content - timelineScrollbar.viewport),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   useEffect(() => {
     if (!trackMenu && !panelMenu) return;
     const close = () => {
@@ -1819,6 +1890,20 @@ export default function App() {
     { length: Math.ceil(totalDuration / (zoom < 0.8 ? 5 : 1)) + 1 },
     (_, index) => index * (zoom < 0.8 ? 5 : 1),
   );
+  const timelineThumbWidth = Math.max(
+    5,
+    Math.min(
+      100,
+      (timelineScrollbar.viewport / timelineScrollbar.content) * 100,
+    ),
+  );
+  const timelineMaxScroll = Math.max(
+    0,
+    timelineScrollbar.content - timelineScrollbar.viewport,
+  );
+  const timelineThumbLeft = timelineMaxScroll
+    ? (timelineScrollbar.left / timelineMaxScroll) * (100 - timelineThumbWidth)
+    : 0;
 
   return (
     <div
@@ -2206,6 +2291,20 @@ export default function App() {
                 )}
               </div>
             </div>
+            <div
+              className="timeline-horizontal-scrollbar"
+              ref={timelineScrollbarTrack}
+              onPointerDown={scrollTimelineFromTrack}
+            >
+              <div
+                className="timeline-scroll-thumb"
+                style={{
+                  left: `${timelineThumbLeft}%`,
+                  width: `${timelineThumbWidth}%`,
+                }}
+                onPointerDown={dragTimelineScrollbar}
+              />
+            </div>
             <div className="track-controls">
               <div className="track-controls-header">
                 <span>GAIN</span><span>PAN</span><span>MUTE</span><span>SOLO</span>
@@ -2248,6 +2347,7 @@ export default function App() {
                 </div>
               ))}
             </div>
+            <div className="timeline-scroll-corner" />
           </div>
         </section>
 
