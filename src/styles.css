@@ -640,7 +640,7 @@ input:focus-visible {
   top: 26px;
   bottom: 0;
   background: var(--acid);
-  pointer-events: auto;
+  pointer-events: none;
   cursor: ew-resize;
   box-shadow: 0 0 8px rgba(89, 217, 176, 0.27);
 }
@@ -660,7 +660,8 @@ input:focus-visible {
   left: -3px;
   border-radius: 2px 2px 50% 50%;
   background: var(--acid);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: ew-resize;
 }
 
 .drop-hint {
